@@ -43,7 +43,7 @@ class Insight(AtlassianRestAPI):
         # set cloud back to true and return
         kwargs["cloud"] = True
         # Insight cloud is particular about its headers.
-        self.default_headers = {"Accept": "application/json"}
+        self.default_headers = {"Accept": "application/json", "Content-Type": "application/json"}
         return args, kwargs
 
     def __get_workspace_id(self):
@@ -411,11 +411,11 @@ class Insight(AtlassianRestAPI):
         iql,
         object_type_id,
         results_per_page,
-        order_by_type_attr_id,
-        object_id,
-        object_schema_id,
-        include_attributes,
-        attributes_to_display,
+        order_by_type_attr_id=None,
+        object_id=None,
+        object_schema_id=None,
+        include_attributes=None,
+        attributes_to_display=None,
         page=1,
         asc=0,
     ):
@@ -529,11 +529,23 @@ class Insight(AtlassianRestAPI):
         """
         raise NotImplementedError
 
-    def get_object_schema_object_types_flat(self, schema_id):
+    def get_object_schema_object_types_flat(self, schema_id, query=None, exclude=None, includeObjectCounts=None):
         """
         Find all object types for this object schema
+        https://developer.atlassian.com/cloud/assets/rest/api-group-objectschema/#api-objectschema-id-objecttypes-flat-get
+        Args:
+            schema_id (str): id of the object schema
+            query (bool, optional): Object Type Names to search for, defaults to None (Use API default)
+            exclude (str, optional): Exclude objects with this name, defaults to None (Use API default)
+            includeObjectCounts (bool, optional): Populate objectCount attribute for each object type, defaults to None (Use API default)
         """
-        raise NotImplementedError
+        kwargs = locals().items()
+        params = dict()
+        params.update({k: v for k, v in kwargs if v is not None and k not in ["self", "schema_id"]})
+        return self.get(
+            "{0}/objectschema/{1}/objecttypes/flat".format(self.api_root, schema_id),
+            params=params,
+        )
 
     def get_object_type_attributes(
         self,
@@ -644,3 +656,23 @@ class Insight(AtlassianRestAPI):
         }
         data = {"fields": {field_id: [{"key": i} for i in insight_keys]}}
         return self.put("{base_url}/{key}".format(base_url=base_url, key=key), data=data)
+
+    def check_duplicate_attribute_values(self):
+        """
+        Check for duplicate attribute values in Insight objects with cardinality maximum 1
+        used for Data Center
+        link: https://confluence.atlassian.com/jirakb/duplicated-attribute-values-in-insight-objects-with-cardinality-maximum-1-1114816155.html
+        :return:
+        """
+        url = "rest/insight/1.0/health/consistency/duplicates/attributevalues"
+        return self.get(url)
+
+    def delete_duplicate_attribute_values(self):
+        """
+        Delete duplicate attribute values in Insight objects with cardinality maximum 1
+        used for Data Center
+        link: https://confluence.atlassian.com/jirakb/duplicated-attribute-values-in-insight-objects-with-cardinality-maximum-1-1114816155.html
+        :return:
+        """
+        url = "rest/insight/1.0/health/consistency/duplicates/attributevalues"
+        return self.delete(url)

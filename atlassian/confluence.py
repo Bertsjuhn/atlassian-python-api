@@ -3,10 +3,11 @@ import logging
 import os
 import time
 import json
-
+import re
 from requests import HTTPError
 import requests
 from deprecated import deprecated
+from bs4 import BeautifulSoup
 from atlassian import utils
 from .errors import ApiError, ApiNotFoundError, ApiPermissionError, ApiValueError, ApiConflictError, ApiNotAcceptable
 from .rest_client import AtlassianRestAPI
@@ -356,6 +357,72 @@ class Confluence(AtlassianRestAPI):
 
         return response
 
+    def get_tables_from_page(self, page_id):
+        """
+        Fetches html  tables added to  confluence page
+        :param page_id: integer confluence page_id
+        :return: json object with page_id, number_of_tables_in_page  and  list of list tables_content representing scrapepd tables
+        """
+        try:
+            page_content = self.get_page_by_id(page_id, expand="body.storage")["body"]["storage"]["value"]
+
+            if page_content:
+                tables_raw = [
+                    [[cell.text for cell in row("th") + row("td")] for row in table("tr")]
+                    for table in BeautifulSoup(page_content, features="lxml")("table")
+                ]
+                if len(tables_raw) > 0:
+                    return json.dumps(
+                        {
+                            "page_id": page_id,
+                            "number_of_tables_in_page": len(tables_raw),
+                            "tables_content": tables_raw,
+                        }
+                    )
+                else:
+                    return {
+                        "No tables found for page: ": page_id,
+                    }
+            else:
+                return {"Page content is empty"}
+        except HTTPError as e:
+            if e.response.status_code == 404:
+                # Raise ApiError as the documented reason is ambiguous
+                log.error("Couldn't retrieve tables  from page", page_id)
+                raise ApiError(
+                    "There is no content with the given pageid, pageid params is not an integer "
+                    "or the calling user does not have permission to view the page",
+                    reason=e,
+                )
+        except Exception as e:
+            log.error("Error occured", e)
+
+    def scrap_regex_from_page(self, page_id, regex):
+        """
+        Method scraps regex patterns from a Confluence page_id.
+
+        :param page_id: The ID of the Confluence page.
+        :param regex: The regex pattern to scrape.
+        :return: A list of regex matches.
+        """
+        regex_output = []
+        page_output = self.get_page_by_id(page_id, expand="body.storage")["body"]["storage"]["value"]
+        try:
+            if page_output is not None:
+                description_matches = [x.group(0) for x in re.finditer(regex, page_output)]
+                if description_matches:
+                    regex_output.extend(description_matches)
+            return regex_output
+        except HTTPError as e:
+            if e.response.status_code == 404:
+                # Raise ApiError as the documented reason is ambiguous
+                log.error("couldn't find page_id : ", page_id)
+                raise ApiNotFoundError(
+                    "There is no content with the given page id,"
+                    "or the calling user does not have permission to view the page",
+                    reason=e,
+                )
+
     def get_page_labels(self, page_id, prefix=None, start=None, limit=None):
         """
         Returns the list of labels on a piece of Content.
@@ -439,27 +506,20 @@ class Confluence(AtlassianRestAPI):
 
         return response
 
-    def get_draft_page_by_id(self, page_id, status="draft"):
+    def get_draft_page_by_id(self, page_id, status="draft", expand=None):
         """
-        Provide content by id with status = draft
-        :param page_id:
-        :param status:
+        Gets content by id with status = draft
+        :param page_id: Content ID
+        :param status: (str) list of content statuses to filter results on. Default value: [draft]
+        :param expand: OPTIONAL: Default value: history,space,version
+                       We can also specify some extensions such as extensions.inlineProperties
+                       (for getting inline comment-specific properties) or extensions. Resolution
+                       for the resolution status of each comment in the results
         :return:
         """
-        url = "rest/api/content/{page_id}?status={status}".format(page_id=page_id, status=status)
-
-        try:
-            response = self.get(url)
-        except HTTPError as e:
-            if e.response.status_code == 404:
-                raise ApiPermissionError(
-                    "The calling user does not have permission to view the content",
-                    reason=e,
-                )
-
-            raise
-
-        return response
+        # Version not passed since draft versions don't match the page and
+        # operate differently between different collaborative modes
+        return self.get_page_by_id(page_id=page_id, expand=expand, status=status)
 
     def get_all_pages_by_label(self, label, start=0, limit=50):
         """
@@ -1254,6 +1314,38 @@ class Confluence(AtlassianRestAPI):
             space=space,
             comment=comment,
         )
+
+    def download_attachments_from_page(self, page_id, path=None):
+        """
+        Downloads all attachments from a page
+        :param page_id:
+        :param path: path to directory where attachments will be saved. If None, current working directory will be used.
+        :return info message: number of saved attachments + path to directory where attachments were saved:
+        """
+        if path is None:
+            path = os.getcwd()
+        try:
+            attachments = self.get_attachments_from_content(page_id=page_id)["results"]
+            if not attachments:
+                return "No attachments found"
+            for attachment in attachments:
+                file_name = attachment["title"]
+                if not file_name:
+                    file_name = attachment["id"]  # if the attachment has no title, use attachment_id as a filename
+                download_link = self.url + attachment["_links"]["download"]
+                r = self._session.get(f"{download_link}")
+                file_path = os.path.join(path, file_name)
+                with open(file_path, "wb") as f:
+                    f.write(r.content)
+        except NotADirectoryError:
+            raise NotADirectoryError("Verify if directory path is correct and/or if directory exists")
+        except PermissionError:
+            raise PermissionError(
+                "Directory found, but there is a problem with saving file to this directory. Check directory permissions"
+            )
+        except Exception as e:
+            raise e
+        return {"attachments downloaded": len(attachments), " to path ": path}
 
     def delete_attachment(self, page_id, filename, version=None):
         """
@@ -2714,7 +2806,7 @@ class Confluence(AtlassianRestAPI):
             headers = self.form_token_headers
             log.info("Initiate PDF export from Confluence Cloud")
             response = self.get(url, headers=headers, not_json_response=True)
-            response_string = response.decode(encoding="utf-8", errors="strict")
+            response_string = response.decode(encoding="utf-8", errors="ignore")
             task_id = response_string.split('name="ajs-taskId" content="')[1].split('">')[0]
             poll_url = "/services/api/v1/task/{0}/progress".format(task_id)
             while running_task:
@@ -2777,6 +2869,47 @@ class Confluence(AtlassianRestAPI):
         if search_string:
             params["searchString"] = search_string
         return self.get(url, params=params)
+
+    """
+    ##############################################################################################
+    #   Confluence whiteboards (cloud only!)  #
+    ##############################################################################################
+    """
+
+    def create_whiteboard(self, spaceId, title=None, parentId=None):
+        url = "/api/v2/whiteboards"
+        data = {"spaceId": spaceId}
+        if title is not None:
+            data["title"] = title
+        if parentId is not None:
+            data["parentId"] = parentId
+        return self.post(url, data=data)
+
+    def get_whiteboard(self, whiteboard_id):
+        try:
+            url = f"/api/v2/whiteboards/{whiteboard_id}"
+            return self.get(url)
+        except HTTPError as e:
+            # Default 404 error handling is ambiguous
+            if e.response.status_code == 404:
+                raise ApiValueError(
+                    "Whiteboard not found. Check confluence instance url and/or if whiteboard id exists", reason=e
+                )
+
+            raise
+
+    def delete_whiteboard(self, whiteboard_id):
+        try:
+            url = f"/api/v2/whiteboards/{whiteboard_id}"
+            return self.delete(url)
+        except HTTPError as e:
+            # # Default 404 error handling is ambiguous
+            if e.response.status_code == 404:
+                raise ApiValueError(
+                    "Whiteboard not found. Check confluence instance url and/or if whiteboard id exists", reason=e
+                )
+
+            raise
 
     """
     ##############################################################################################
@@ -2934,6 +3067,24 @@ class Confluence(AtlassianRestAPI):
         }
 
         return self.post(url, data=data, headers=self.experimental_headers)
+
+    def remove_space_permission(self, space_key, user, permission):
+        """
+        The JSON-RPC APIs for Confluence are provided here to help you browse and discover APIs you have access to.
+        JSON-RPC APIs operate differently than REST APIs.
+        To learn more about how to use these APIs,
+        please refer to the Confluence JSON-RPC documentation on Atlassian Developers.
+        """
+        if self.api_version == "cloud":
+            return {}
+        url = "rpc/json-rpc/confluenceservice-v2"
+        data = {
+            "jsonrpc": "2.0",
+            "method": "removePermissionFromSpace",
+            "id": 9,
+            "params": [permission, user, space_key],
+        }
+        return self.post(url, data=data).get("result") or {}
 
     def get_space_permissions(self, space_key):
         """

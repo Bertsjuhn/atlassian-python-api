@@ -61,6 +61,9 @@ Manage users
 
 .. code-block:: python
 
+    # Get myself
+    jira.myself()
+
     # Get user
     jira.user(account_id)
 
@@ -73,8 +76,15 @@ Manage users
     # Get web sudo cookies using normal http request
     jira.user_get_websudo()
 
-    # Fuzzy search using emailAddress or displayName
-    jira.user_find_by_user_string(query, start=0, limit=50, include_inactive_users=False)
+    # Fuzzy search using emailAddress or displayName for Jira Cloud
+    jira.user_find_by_user_string(query="a.user@example.com", start=0, limit=50, include_inactive_users=False)
+    jira.user_find_by_user_string(query="a.user", start=0, limit=50, include_inactive_users=False)
+    jira.user_find_by_user_string(query="a user")
+    jira.user_find_by_user_string(account_id="a-users-account-id")
+    # for DC edition
+    jira.user_find_by_user_string(username="a.user")
+    jira.user_find_by_user_string(username="a user")
+    jira.user_find_by_user_string(username="a")
 
     # Get groups of a user. This API is only available for Jira Cloud platform.
     jira.get_user_groups(account_id)
@@ -109,11 +119,26 @@ Manage projects
 
     # Get all projects
     # Returns all projects which are visible for the currently logged in user.
-    jira.projects(included_archived=None)
+    jira.projects(included_archived=None, expand=None)
 
     # Get all project alternative call
     # Returns all projects which are visible for the currently logged in user.
-    jira.get_all_projects(included_archived=None)
+    jira.get_all_projects(included_archived=None, expand=None)
+
+    # Get all projects only for Jira Cloud
+    # Returns all projects which are visible for the currently logged in user.
+    jira.projects_from_cloud(included_archived=None, expand=None)
+
+    # Get one page of projects
+    # Returns a paginated list of projects visible for the currently logged in user.
+    # Use the url formatting to get a specific page as shown here:
+    # url = f"{self.resource_url("project/search")}?startAt={start_at}&maxResults={max_results}"
+    # Defaults to the first page, which returns a nextPage url when available.
+    jira.projects_paginated(included_archived=None, expand=None, url=None)
+
+    # Get all projects only for Jira Server
+    # Returns all projects which are visible for the currently logged in user.
+    jira.projects_from_server(included_archived=None, expand=None)
 
     # Delete project
     jira.delete_project(key)
@@ -186,7 +211,7 @@ Manage projects
 
     # Returns a list of active users who have browse permission for a project that matches the search string for username.
     # Using " " string (space) for username gives All the active users who have browse permission for a project
-    jira.get_users_with_browse_permission_to_a_project(self, username, issue_key=None, project_key=None, start=0, limit=100)
+    jira.get_users_with_browse_permission_to_a_project(username, issue_key=None, project_key=None, start=0, limit=100)
 
 Manage issues
 -------------
@@ -201,10 +226,15 @@ Manage issues
 
     # Update issue field
     fields = {'summary': 'New summary'}
-    jira.update_issue_field(key, fields)
+    jira.update_issue_field(key, fields, notify_users=True)
+
+    # Append value to issue field
+    field = 'customfield_10000'
+    value = {'name': 'username'}
+    jira.issue_field_value_append(issue_id_or_key, field, value, notify_users=True)
 
     # Get existing custom fields or find by filter
-    jira.get_custom_fields(self, search=None, start=1, limit=50):
+    jira.get_custom_fields(search=None, start=1, limit=50):
 
     # Check issue exists
     jira.issue_exists(issue_key)
@@ -226,6 +256,9 @@ Manage issues
 
     # Get issue transitions
     jira.get_issue_transitions(issue_key)
+
+    # Get issue status change log
+    jira.get_issue_status_changelog(issue_key)
 
     # Get status ID from name
     jira.get_status_id_from_name(status_name)
@@ -250,6 +283,15 @@ Manage issues
 
     # Get Issue Edit Meta
     jira.issue_editmeta(issue_key)
+
+    # Get issue create meta, deprecated on Cloud and from Jira 9.0
+    jira.issue_createmeta(project, expand="projects.issuetypes.fields")
+
+    # Get create metadata issue types for a project
+    jira.issue_createmeta_issuetypes(project, start=None, limit=None)
+
+    # Get create field metadata for a project and issue type id
+    jira.issue_createmeta_fieldtypes(project, issue_type_id, start=None, limit=None)
 
     # Create Issue Link
     data = {
@@ -295,6 +337,12 @@ Manage issues
     # Restore an issue
     jira.issue_restore(issue_id_or_key)
 
+    # Add Comments
+    jira.issue_add_comment(issue_id_or_key, "This is a sample comment string.")
+
+    # Edit Comments
+    jira.issue_edit_comment(issue_key, comment_id, comment, visibility=None, notify_users=True)
+
     # Issue Comments
     jira.issue_get_comments(issue_id_or_key)
 
@@ -307,6 +355,19 @@ Manage issues
     # Get change history for an issue
     jira.get_issue_changelog(issue_key)
 
+    # Get property keys from an issue
+    jira.get_issue_property_keys(issue_key)
+
+    # Set issue property
+    data = { "Foo": "Bar" }
+    jira.set_issue_property(issue_key, property_key, data)
+
+    # Get issue property
+    jira.get_issue_property(issue_key, property_key)
+
+    # Delete issue property
+    jira.delete_issue_property(issue_key, property_key)
+
     # Get worklog for an issue
     jira.issue_get_worklog(issue_key)
 
@@ -314,6 +375,11 @@ Manage issues
     # started is a date string in the format %Y-%m-%dT%H:%M:%S.000+0000%z
     jira.issue_worklog(issue_key, started, time_in_sec)
 
+    # Scrap regex matches from issue description and comments:
+    jira.scrap_regex_from_issue(issue_key, regex)
+
+    # Get tree representation of issue and its subtasks + inward issue links
+    jira.get_issue_tree(issue_key)
 
 Epic Issues
 -------------
@@ -406,7 +472,7 @@ Manage Sprints
     jira.get_all_issues_for_sprint_in_board(board_id, state=None, start=0, limit=50)
 
     # Get all versions for sprint in board
-    jira.get_all_versions_from_board(self, board_id, released="true", start=0, limit=50)
+    jira.get_all_versions_from_board(board_id, released="true", start=0, limit=50)
 
     # Create sprint
     jira.jira.create_sprint(sprint_name, origin_board_id,  start_datetime, end_datetime, goal)
@@ -437,6 +503,12 @@ Attachments actions
     # Add attachment (IO Object) to issue
     jira.add_attachment_object(issue_key, attachment)
 
+    # Download attachments from the issue
+    jira.download_attachments_from_issue(issue, path=None, cloud=True):
+
+    # Get list of attachments ids from issue
+    jira.get_attachments_ids_from_issue(issue_key)
+
 Manage components
 -----------------
 
@@ -447,6 +519,9 @@ Manage components
 
     # Create component
     jira.create_component(component)
+
+    # Update component
+    jira.update_component(component, component_id)
 
     # Delete component
     jira.delete_component(component_id)
@@ -518,8 +593,8 @@ TEMPO
     # Look at the tempo docs for additional information:
     # https://www.tempo.io/server-api-documentation/timesheets#operation/searchWorklogs
     # NOTE: check if you are using correct types for the parameters!
-    #     :param from: string From Date
-    #     :param to: string To Date
+    #     :param date_from: string From Date
+    #     :param date_to: string To Date
     #     :param worker: Array of strings
     #     :param taskId: Array of integers
     #     :param taskKey: Array of strings
@@ -539,7 +614,7 @@ TEMPO
     #     :param pageNo: integer
     #     :param maxResults: integer
     #     :param offset: integer
-    jira.tempo_4_timesheets_find_worklogs(**params)
+    jira.tempo_4_timesheets_find_worklogs(date_from=None, date_to=None, **params)
 
     # :PRIVATE:
     # Get Tempo timesheet worklog by issue key or id.
